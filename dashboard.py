@@ -1,118 +1,183 @@
+# fashion_dashboard_full_v2.py
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from io import BytesIO
 
-# -----------------------------
-# Page Config
+# -------------------- Page Setup --------------------
 st.set_page_config(page_title="Centralized Dashboard", layout="wide")
+st.title("Centralized Dashboard")
+st.markdown("Analyze fashion sales performance across platforms, products, and cities.")
 
-# -----------------------------
-# Load Dataset
-df = pd.read_excel("fashion_dataset.xlsx")
+# -------------------- Load Dataset --------------------
+@st.cache_data
+def load_data(file):
+    df = pd.read_excel(file)
+    df['Date'] = pd.to_datetime(df['Date'])
+    df['Revenue'] = pd.to_numeric(df['Revenue'], errors='coerce')
+    df['Profit'] = pd.to_numeric(df['Profit'], errors='coerce')
+    df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce')
+    return df
 
-# -----------------------------
-# Title
-st.markdown("<h1 style='text-align:center;'>Centralized Dashboard</h1>", unsafe_allow_html=True)
+data = load_data("fashion_dataset.xlsx")
 
-# -----------------------------
-# Platform Selector (Top)
-platform_options = ["Amazon", "Flipkart", "Shopify"]
-selected_platform_top = st.radio("Select Platform (Top)", options=platform_options + ["All"], horizontal=True)
-# Sidebar platform selector
-selected_platform_sidebar = st.sidebar.selectbox("Select Platform (Sidebar)", options=["All"] + platform_options)
+# -------------------- Sidebar Filters --------------------
+st.sidebar.markdown("### Filters")
 
-# Determine final platform filter (if sidebar is used, it overrides top)
-if selected_platform_sidebar == "All":
-    platform_filter = platform_options
-else:
-    platform_filter = [selected_platform_sidebar]
+# Date range
+min_date = data['Date'].min()
+max_date = data['Date'].max()
+date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date])
 
-# -----------------------------
-# Sidebar Filters
-st.sidebar.header("Other Filters")
+# Platform filter
+platforms = ["All"] + sorted(data['Platform'].unique().tolist())
+selected_platform = st.sidebar.multiselect("Platform", platforms, default="All")
 
-def multiselect_with_all(label, options):
-    options_with_all = ["All"] + list(options)
-    selected = st.sidebar.multiselect(label, options_with_all, default=["All"])
-    if "All" in selected or not selected:
-        return list(options)
-    else:
-        return selected
+# State filter
+states = ["All"] + sorted(data['State'].unique().tolist())
+selected_state = st.sidebar.multiselect("State", states, default="All")
 
-# Date range at top
-date_range = st.sidebar.date_input("Select Date Range", [df["Date"].min(), df["Date"].max()])
+# City filter
+cities = ["All"] + sorted(data['City'].unique().tolist())
+selected_city = st.sidebar.multiselect("City", cities, default="All")
 
-# Other filters
-selected_state = multiselect_with_all("State", df["State"].unique())
-selected_city = multiselect_with_all("City", df["City"].unique())
-selected_product = multiselect_with_all("Product", df["Product"].unique())
+# Product filter
+products = ["All"] + sorted(data['Product'].unique().tolist())
+selected_product = st.sidebar.multiselect("Product", products, default="All")
 
-# -----------------------------
-# Filter Data
-filtered_df = df[
-    (df["Date"] >= pd.to_datetime(date_range[0])) &
-    (df["Date"] <= pd.to_datetime(date_range[1])) &
-    (df["Platform"].isin(platform_filter)) &
-    (df["State"].isin(selected_state)) &
-    (df["City"].isin(selected_city)) &
-    (df["Product"].isin(selected_product))
+# Top-N selection
+top_n = st.sidebar.slider("Top N for Products & Cities", min_value=1, max_value=20, value=5, step=1)
+
+# -------------------- Filter Data --------------------
+filtered_data = data.copy()
+filtered_data = filtered_data[
+    (filtered_data['Date'] >= pd.to_datetime(date_range[0])) &
+    (filtered_data['Date'] <= pd.to_datetime(date_range[1]))
 ]
 
-# -----------------------------
-# KPI Calculations
-total_gmv = filtered_df["Revenue"].sum()
-aov = filtered_df["Revenue"].sum() / max(len(filtered_df),1)
-profit = filtered_df["Profit"].sum()
-return_cancel_count = filtered_df[filtered_df["Delivery_Status"].isin(["Returned","Cancelled"])].shape[0]
-quantity_sold = filtered_df["Quantity"].sum()
-unique_products = filtered_df["Product"].nunique()
+if "All" not in selected_platform:
+    filtered_data = filtered_data[filtered_data['Platform'].isin(selected_platform)]
 
-# -----------------------------
-# KPI Cards
-kpi1, kpi2, kpi3 = st.columns(3)
-kpi1.metric("GMV", f"₹{total_gmv:,.0f}")
-kpi2.metric("AOV", f"₹{aov:,.0f}")
-kpi3.metric("Profit", f"₹{profit:,.0f}")
+if "All" not in selected_state:
+    filtered_data = filtered_data[filtered_data['State'].isin(selected_state)]
 
-kpi4, kpi5, kpi6 = st.columns(3)
-kpi4.metric("Return/Cancel Orders", return_cancel_count)
-kpi5.metric("Quantity Sold", quantity_sold)
-kpi6.metric("Unique Products", unique_products)
+if "All" not in selected_city:
+    filtered_data = filtered_data[filtered_data['City'].isin(selected_city)]
 
-# -----------------------------
-# Charts Layout
+if "All" not in selected_product:
+    filtered_data = filtered_data[filtered_data['Product'].isin(selected_product)]
 
-# Row 1: Revenue vs Profit + Top Products
-colA, colB = st.columns(2)
+# -------------------- Empty Data Check --------------------
+if filtered_data.empty:
+    st.warning("No data available for the selected filters.")
+else:
 
-with colA:
-    rev_profit_df = filtered_df.groupby("Product")[["Revenue","Profit"]].sum().reset_index()
-    fig1 = px.bar(rev_profit_df, x="Product", y=["Revenue","Profit"], barmode="group", title="Revenue vs Profit")
-    st.plotly_chart(fig1, use_container_width=True)
+    # -------------------- KPIs --------------------
+    total_revenue = filtered_data['Revenue'].sum()
+    total_orders = filtered_data['Order_ID'].nunique()
+    aov = total_revenue / total_orders if total_orders else 0
+    total_profit = filtered_data['Profit'].sum()
+    total_quantity = filtered_data['Quantity'].sum()
+    unique_customers = filtered_data['Customer_ID'].nunique()
 
-with colB:
-    top_products_df = filtered_df.groupby("Product")["Revenue"].sum().nlargest(5).reset_index()
-    fig2 = px.bar(top_products_df, x="Product", y="Revenue", title="Top 5 Products by Revenue",
-                  color_discrete_sequence=["lightyellow"])
-    st.plotly_chart(fig2, use_container_width=True)
+    # KPIs Row 1
+    kpi1, kpi2, kpi3 = st.columns(3)
+    kpi1.metric("GMV", f"₹{total_revenue:,.2f}")
+    kpi2.metric("AOV", f"₹{aov:,.2f}")
+    kpi3.metric("Profit", f"₹{total_profit:,.2f}")
 
-# Row 2: Top 5 Cities by Revenue
-top_cities_df = filtered_df.groupby("City")["Revenue"].sum().nlargest(5).reset_index()
-fig3 = px.bar(top_cities_df, x="City", y="Revenue", title="Top 5 Cities by Revenue",
-              color_discrete_sequence=["lightgreen"])
-st.plotly_chart(fig3, use_container_width=True)
+    # KPIs Row 2 — aligned properly
+    kpi4, kpi5, _, _ = st.columns([1, 1, 0.1, 0.1])
+    kpi4.metric("Quantity Sold", total_quantity)
+    kpi5.metric("Unique Customers", unique_customers)
 
-# Row 3: Grouped Bar Chart (Revenue & Quantity by Platform)
-platform_summary = filtered_df.groupby("Platform")[["Revenue","Quantity"]].sum().reset_index()
-fig4 = px.bar(platform_summary, x="Platform", y=["Revenue","Quantity"], barmode="group",
-              title="Revenue and Quantity by Platform")
-st.plotly_chart(fig4, use_container_width=True)
+    # -------------------- Charts --------------------
+    # Revenue by Platform
+    rev_platform = filtered_data.groupby("Platform")['Revenue'].sum().reset_index()
+    fig_rev_platform = px.bar(
+        rev_platform, x='Platform', y='Revenue', text='Revenue',
+        title='Revenue by Platform'
+    )
+    fig_rev_platform.update_traces(texttemplate='₹%{text:,.2f}', textposition='outside')
+    fig_rev_platform.update_layout(showlegend=False)
 
-# Row 4: Revenue Trend Over Time
-revenue_trend_df = filtered_df.groupby("Date")["Revenue"].sum().reset_index()
-fig5 = px.line(revenue_trend_df, x="Date", y="Revenue", title="Revenue Trend Over Time")
-st.plotly_chart(fig5, use_container_width=True)
+    # Profit by Platform (light orange)
+    profit_platform = filtered_data.groupby("Platform")['Profit'].sum().reset_index()
+    fig_profit_platform = px.bar(
+        profit_platform, x='Platform', y='Profit', text='Profit',
+        title='Profit by Platform', color_discrete_sequence=['#FFD580']
+    )
+    fig_profit_platform.update_traces(texttemplate='₹%{text:,.2f}', textposition='outside')
+    fig_profit_platform.update_layout(showlegend=False)
 
-# Row 5: Product Contribution Pie
-fig6 = px.pie(filtered_df, names="Product", values="Revenue", title="Revenue Contribution by Product")
-st.plotly_chart(fig6, use_container_width=True)
+    # Top N Products by Revenue (light yellow)
+    top_products = (filtered_data.groupby('Product')['Revenue']
+                    .sum()
+                    .sort_values(ascending=False)
+                    .head(top_n)
+                    .reset_index())
+    fig_top_products = px.bar(
+        top_products, x='Revenue', y='Product', orientation='h',
+        title=f'Top {top_n} Products by Revenue', text='Revenue',
+        color_discrete_sequence=['#FFFACD']
+    )
+    fig_top_products.update_traces(texttemplate='₹%{text:,.2f}', textposition='inside')
+
+    # Top N Cities by Revenue (light green)
+    top_cities = (filtered_data.groupby('City')['Revenue']
+                  .sum()
+                  .sort_values(ascending=False)
+                  .head(top_n)
+                  .reset_index())
+    fig_top_cities = px.bar(
+        top_cities, x='Revenue', y='City', orientation='h',
+        title=f'Top {top_n} Cities by Revenue', text='Revenue',
+        color_discrete_sequence=['#90EE90']
+    )
+    fig_top_cities.update_traces(texttemplate='₹%{text:,.2f}', textposition='inside')
+
+    # Revenue Trend Over Time
+    rev_trend = filtered_data.groupby('Date')['Revenue'].sum().reset_index()
+    fig_rev_trend = px.line(rev_trend, x='Date', y='Revenue', title='Revenue Trend Over Time')
+    fig_rev_trend.update_traces(mode='lines+markers', hovertemplate='Date: %{x}<br>Revenue: ₹%{y:,.2f}')
+
+    # Revenue vs Quantity Bubble Chart
+    bubble_data = filtered_data.groupby(['Platform', 'SKU']).agg({'Revenue':'sum', 'Quantity':'sum'}).reset_index()
+    fig_bubble = px.scatter(
+        bubble_data, x='Quantity', y='Revenue', size='Revenue', color='Platform',
+        hover_name='SKU', title='Revenue vs Quantity by Platform', size_max=60
+    )
+    fig_bubble.update_traces(hovertemplate='SKU: %{hovertext}<br>Revenue: ₹%{y:,.2f}<br>Quantity: %{x}')
+
+    # -------------------- Layout: 3 rows x 2 columns --------------------
+    col1, col2 = st.columns(2)
+    col1.plotly_chart(fig_rev_platform, use_container_width=True)
+    col2.plotly_chart(fig_profit_platform, use_container_width=True)
+
+    col3, col4 = st.columns(2)
+    col3.plotly_chart(fig_top_products, use_container_width=True)
+    col4.plotly_chart(fig_top_cities, use_container_width=True)
+
+    col5, col6 = st.columns(2)
+    col5.plotly_chart(fig_rev_trend, use_container_width=True)
+    col6.plotly_chart(fig_bubble, use_container_width=True)
+
+    # -------------------- Filtered Data Table --------------------
+    st.markdown("### Filtered Data Preview")
+    st.dataframe(filtered_data.head(30))
+
+    # -------------------- Download Button --------------------
+    def convert_df_to_excel(df):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+        return output.getvalue()
+
+    excel_data = convert_df_to_excel(filtered_data)
+    st.download_button(
+        label="Download Filtered Data",
+        data=excel_data,
+        file_name="filtered_fashion_data.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
