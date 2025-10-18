@@ -56,7 +56,7 @@ if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
 else:
     start_date = end_date = date_range
 
-filtered_data = filtered_data[(filtered_data['Date'] >= pd.to_datetime(start_date)) & 
+filtered_data = filtered_data[(filtered_data['Date'] >= pd.to_datetime(start_date)) &
                               (filtered_data['Date'] <= pd.to_datetime(end_date))]
 
 if "All" not in selected_platform:
@@ -99,9 +99,9 @@ else:
     - GMV → Total revenue earned from all sales.
     - AOV → Average amount spent per order.
     - Profit → Total profit earned after costs.
-    - Quantity Sold →Total number of items sold.
+    - Quantity Sold → Total number of items sold.
     - Unique Customers → Number of distinct customers in the data.
-    - Cancel/Return Orders → Number of orders that were cancelled or returned..
+    - Cancel/Return Orders → Number of orders that were cancelled or returned.
     """)
 
     # -------------------- Charts --------------------
@@ -187,22 +187,27 @@ else:
     if 'Payment_Method' in filtered_data.columns:
         df_payment = filtered_data.groupby(['Customer_ID', 'Product', 'Payment_Method']).sum(numeric_only=True).reset_index()
         excel_payment = convert_df_to_excel(df_payment)
+    else:
+        excel_payment = None
 
     # Highest Revenue Customers
     df_highest_rev = filtered_data.groupby(['Customer_ID', 'Product']).agg({'Profit':'sum', 'Revenue':'sum'}).reset_index()
     excel_highest_rev = convert_df_to_excel(df_highest_rev)
 
-    # One-Time Customers
-    df_one_timer = filtered_data.groupby(['Customer_ID', 'Customer_Name', 'City']).agg({'Profit':'sum', 'Quantity':'sum', 'Order_ID':'nunique'}).reset_index()
+    # One-Time Customers (safe groupby fix)
+    group_cols = [col for col in ['Customer_ID', 'Customer_Name', 'City'] if col in filtered_data.columns]
+    df_one_timer = filtered_data.groupby(group_cols).agg({'Profit':'sum', 'Quantity':'sum', 'Order_ID':'nunique'}).reset_index()
     df_one_timer = df_one_timer[df_one_timer['Order_ID'] == 1]
     excel_one_timer = convert_df_to_excel(df_one_timer)
 
+    # -------------------- Download Section --------------------
     st.markdown("### 📁 Download Reports")
     b1, b2 = st.columns(2)
     b1.download_button("Download Most Profitable Products", data=excel_profitable,
                        file_name="most_profitable_products.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    b2.download_button("Download Payment Method per Customer", data=excel_payment,
-                       file_name="payment_method_customers.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if excel_payment:
+        b2.download_button("Download Payment Method per Customer", data=excel_payment,
+                           file_name="payment_method_customers.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     b3, b4 = st.columns(2)
     b3.download_button("Download Highest Revenue Customers", data=excel_highest_rev,
